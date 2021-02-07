@@ -2,16 +2,249 @@
 <html>
   <head>
     <script>
+      // webrtc_ployfill.js
+
+      // These vars is gonna be filled based on browser type      
       var webrtc_capable = true;
-      var rtc_peer_connection = null;
+      var rtc_peer_connection = null; 
       var rtc_session_description = null;
       var get_user_media = null;
       var connect_stream_to_src = null;
       var stun_server = "stun.l.google.com:19302"
+
+      if(navigator.getUserMedia) {
+        rtc_peer_connection = RTCPeerConnection;
+        rtc_session_description = RTCSessionDescription;
+        get_user_media = navigator.getUserMedia.bind(navigator);
+        connect_stream_to_src = function(media_stream, media_element) {
+          media_element.srcObject = media_stream;
+          media_element.play();
+        };
+      } else if(navigator.mozGetUserMedia) {
+        rtc_peer_connection = mozRTCPeerConnection;
+        rtc_session_description = mozRTCSessionDescription;
+        get_user_media = navigator.mozGetUserMedia.bind(navigator);
+        connect_stream_to_src = function(media_stream, media_element) {
+          media_elemenmt.mozSrcObject = media_stream;
+          media_element.play();
+        };
+        stun_server = "74.125.31.127:19302";
+      } else if(navigator.webkitGetUserMedia) {
+        rtc_peer_connection = webkitRTCPeerConnection;
+        rtc_session_description = RTCSessionDescription;
+        get_user_media = navigator.webkitGetUserMedia.bind(navigator);
+        connect_stream_to_src = function(media_stream, media_stream) {
+          media_element.src = webkitURL.createObjectURL(media_stream);
+        };
+      } else {
+        alert("This browser does not support WebRTC - Visit webrtc.og fro more info")
+        webrtc_capable = false;
+      }
     </script>
 
-  </head>
-  <body>
+    <script>
+      // basic_video_call.js
 
+      var call_token;
+      var signaling_server;
+      var peer_connection;
+
+      function start() {        
+        peer_connection = new rtc_peer_connection({
+          "iceServers": [
+            { "url" : "stun:" + stun_server},
+          ]
+        });
+
+        peer_connection.onicecandiate = function(ice_event) {
+          if(ice_event.candidate) {
+            signaling_server.send(
+              JSON.stringify({
+                type: "new_ice_candidate",
+                candidate: ice_event.candidate
+              })
+            )
+          }
+        };
+
+        peer_connection.onaddstream = function(event) {
+          connect_stream_to_src(event.stream, document.getElementById("remote_video"));
+          document.getElementById("loading_state").style.display = "none";
+          document.getElementById("open_call_state").style.display = "block";
+        };
+
+        signaling_server = new WebSocket("ws://localhost:1234");
+
+        if(document.location.hash === "" || document.location.hash === undefined) {
+          var token = Date.now()+"-"+Math.round(Math.random()*10000);
+          call_token = "#"+token;
+
+          document.location.hash = token;
+
+          signaling_server.onopen = function() {
+            signaling_server.onmessage = caller_signal_handler;
+
+            signaling_server.send(
+              JSON.stringify({
+                token:call_token,
+                type:"join"
+              })
+            )
+          }
+
+          document.title = "You care the Caller";
+          document.getElementById("loading_state").innerHTML = "Ready for a call... ask your fiend to visit:<br/><br/>"+document.location;
+        } else {
+          call_token = document.location.hash;
+
+          signaling_server.onopen = function() {
+            signaling_server.onmessage = callee_signal_handler;
+
+            signaling_server.send(
+              JSON.stringify({
+                token:call_token,
+                type:"join"
+              })
+            );
+
+            signaling_server.send(
+              JSON.stringify({
+                token:call_token,
+                type:"callee_arrived"
+              })
+            );
+          }
+
+          document.title = "You are the Callee";
+          document.getElementById("loading_state").innerHTML = "One moment please... connecting your call...";
+        }
+      }
+
+      function new_description_created(description) {
+        peer_connection.setLocalDescription(
+          description,
+          function() {
+            signaling_server.send(
+              JSON.stringify({
+                token:call_token,
+                type:"new_description",
+                sdp:description
+              })
+            );
+          },
+          log_error
+        );
+      }
+
+      function caller_signal_handler(event) {
+        var signal = JSON.parse(event.data);
+        if(signal.type === "callee_arrived") {
+          peer_connection.createOffer(
+            new_description_created,
+            log_error
+          );
+        } else if(signal.type === "new_ice_candidate") {
+          peer_connection.addIceCandidate(
+            new RTCIceCandidate(signal.candidate)
+          );
+        } else if(signal.type === "new_description") {
+          peer_connection.setRemoteDescription(
+            new rtc_session_description(signal.dsp),
+            function() {
+              if(peer_connection.remoteDescription.type === "answer") {
+                // extend with your own custom answer handling here    
+              }
+            },
+            log_error
+          );
+        } else {
+          // extend with your own custom answer handling here    
+        }
+      }
+
+      function callee_signal_handler(event) {
+        var signal = JSON.parse(event.data);
+        if(signal.type === "new_ice_candidate") {
+          peer_connection.addIceCandidate(
+            new RTCIceCandidate(signal.candidate)
+          );
+        } else if(signal.type === "new_description") {
+          peer_connection.setRemoteDesciption(
+            new rtc_session_description(signal.sdp),
+            function() {
+              if(peer_connection.remoteDescription.type == "offer") {
+                peer_connection.createAnswer(new_description_created, log_error);
+              }
+            },
+            log_error
+          );
+        } else {
+          // extend with your own signal types here
+        }
+      }
+
+      function setup_video() {
+        get_user_media(
+          {
+            "audio": true,
+            "video": true
+          },
+          function(local_stream) {
+            connect_stream_to_src(local_stream, document.getElementById("local_video"));
+            peer_connection.addStream(local_stream);
+          },
+          log_error
+        );
+      }
+
+      function log_Error(error) {
+        console.log(error);
+      }
+
+      
+    </script>
+    <style>
+      html, body {
+        padding: 0px;
+        margin: 0px;
+        font-family: "Arial", "Helvetica", sans-serif;
+      }
+      #loading_state {
+        position: absolute;
+        top: 45%;
+        left: 0px;
+        width:100%;
+        font-size: 20px;
+        text-align: center;
+      }
+      #open_call_state {
+        display: none;
+      }
+      #local_video {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        width: 160px;
+        height: 120px;
+        background: #333333;
+      }
+      #remote_video {
+        position: absolute;
+        top: 0px;
+        left: 0px;
+        width: 1024px;
+        height: 768px;
+        background: #999999;
+      }
+    </style>
+  </head>
+  <body onload="start()">
+    <div id="loading_state">
+      loading...
+    </div>
+    <div id="open_call_state">
+      <video id="remote_video"></video>
+      <video id="local_video"></video>
+    </div>
   </body>
 </html>
