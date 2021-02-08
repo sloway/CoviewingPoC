@@ -73,6 +73,8 @@
           document.getElementById("open_call_state").style.display = "block";
         };
 
+        setup_video();
+
         signaling_server = new WebSocket("ws://localhost:1234");
 
         if(document.location.hash === "" || document.location.hash === undefined) {
@@ -186,10 +188,10 @@
       function setup_video() {
         get_user_media(
           {
-            "audio": true,
+            "audio": false,
             "video": true
           },
-          function(local_stream) {
+          function(local_stream) {            
             connect_stream_to_src(local_stream, document.getElementById("local_video"));
             peer_connection.addStream(local_stream);
           },
@@ -197,7 +199,7 @@
         );
       }
 
-      function log_Error(error) {
+      function log_error(error) {
         console.log(error);
       }
 
